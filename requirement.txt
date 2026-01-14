@@ -1,5 +1,5 @@
 streamlit>=1.30
-openai>=0.27.0
+openai>==1.10.2
 pillow
 numpy
 opencv-python-headless
