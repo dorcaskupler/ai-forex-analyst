@@ -1,3 +1,8 @@
+import openai
+import streamlit as st
+
+st.write("OpenAI library version:", openai.__version__)
+
 import streamlit as st
 import json
 import os
