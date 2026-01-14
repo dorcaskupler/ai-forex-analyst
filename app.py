@@ -1,133 +1,265 @@
 import streamlit as st
-import tempfile
-import openai
+import json
+import os
+import hashlib
+from PIL import Image, ImageDraw
+from openai import OpenAI
 
-# ---------- CONFIG ----------
-st.set_page_config(
-    page_title="AI Forex Analyst",
-    layout="wide",
-    page_icon="📊"
+# ---------------- CONFIG ----------------
+st.set_page_config(page_title="AI Forex Analyst", layout="wide")
+
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+
+USERS_FILE = "users.json"
+HISTORY_DIR = "trade_history"
+os.makedirs(HISTORY_DIR, exist_ok=True)
+
+# ---------------- AUTH UTILS ----------------
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        return {}
+    with open(USERS_FILE, "r") as f:
+        return json.load(f)
+
+def save_users(users):
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f)
+
+def save_trade(username, trade):
+    path = f"{HISTORY_DIR}/{username}.json"
+    history = []
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            history = json.load(f)
+    history.append(trade)
+    with open(path, "w") as f:
+        json.dump(history, f, indent=2)
+
+def load_trade_history(username):
+    path = f"{HISTORY_DIR}/{username}.json"
+    if not os.path.exists(path):
+        return []
+    with open(path, "r") as f:
+        return json.load(f)
+
+# ---------------- LOGIN ----------------
+st.sidebar.title("🔐 User Access")
+users = load_users()
+
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if not st.session_state.logged_in:
+    mode = st.sidebar.radio("Choose", ["Login", "Register"])
+    username = st.sidebar.text_input("Username")
+    password = st.sidebar.text_input("Password", type="password")
+
+    if mode == "Register" and st.sidebar.button("Create Account"):
+        if username in users:
+            st.sidebar.error("Username already exists")
+        else:
+            users[username] = hash_password(password)
+            save_users(users)
+            st.sidebar.success("Account created. Please login.")
+
+    if mode == "Login" and st.sidebar.button("Login"):
+        if users.get(username) == hash_password(password):
+            st.session_state.logged_in = True
+            st.session_state.user = username
+            st.rerun()
+        else:
+            st.sidebar.error("Invalid credentials")
+
+    st.stop()
+
+# ---------------- MAIN APP ----------------
+st.title("📈 AI Multi-Timeframe Forex Trading Analyst")
+
+style = st.selectbox("Trading Style", ["Day Trading", "Swing Trading"])
+
+tools = st.multiselect(
+    "Analysis Tools",
+    ["Support & Resistance", "Moving Averages", "Market Structure"],
+    default=["Support & Resistance"]
 )
-
-openai.api_key = st.secrets["OPENAI_API_KEY"]
-
-# ---------- HEADER ----------
-st.markdown("""
-# 📊 AI Forex Chart Analyst
-Institutional-style technical analysis powered by AI  
-*Probability-based insights · No financial advice*
-""")
 
 st.divider()
+st.subheader("📤 Upload TradingView Chart Screenshots")
 
-# ---------- SIDEBAR ----------
-st.sidebar.header("🔧 Analysis Settings")
+c1, c2, c3 = st.columns(3)
+with c1:
+    htf = st.file_uploader("4H Chart", type=["png", "jpg"])
+with c2:
+    mtf = st.file_uploader("1H Chart", type=["png", "jpg"])
+with c3:
+    ltf = st.file_uploader("15m Chart", type=["png", "jpg"])
 
-trading_style = st.sidebar.selectbox(
-    "Trading Style",
-    ["Scalping", "Day Trading", "Swing Trading", "Position Trading"]
-)
+# ---------------- DRAWING ----------------
+def draw_horizontal(image, levels, color):
+    img = image.copy()
+    d = ImageDraw.Draw(img)
+    w, h = img.size
+    for lvl in levels:
+        y = int(h * lvl)
+        d.line([(0, y), (w, y)], fill=color, width=3)
+    return img
 
-bias_tf = st.sidebar.selectbox(
-    "Bias Timeframe",
-    ["15m", "1H", "4H", "1D", "1W"]
-)
+def draw_trendline(image, start, end, color):
+    img = image.copy()
+    d = ImageDraw.Draw(img)
+    w, h = img.size
+    d.line(
+        [(int(start[0]*w), int(start[1]*h)), (int(end[0]*w), int(end[1]*h))],
+        fill=color,
+        width=3
+    )
+    return img
 
-entry_tf = st.sidebar.selectbox(
-    "Entry Timeframe",
-    ["1m", "5m", "15m", "30m", "1H"]
-)
+def draw_ma(image, points, color):
+    img = image.copy()
+    d = ImageDraw.Draw(img)
+    w, h = img.size
+    pts = [(int(x*w), int(y*h)) for x, y in points]
+    d.line(pts, fill=color, width=3)
+    return img
 
-risk_model = st.sidebar.selectbox(
-    "Risk Model",
-    ["Conservative", "Balanced", "Aggressive"]
-)
+# ---------------- ANALYSIS ----------------
+if st.button("🔍 Analyze Market", use_container_width=True):
+    if not (htf and mtf and ltf):
+        st.error("Please upload all three charts.")
+        st.stop()
 
-st.sidebar.info(
-    "Upload a **TradingView chart screenshot**.\n\n"
-    "Make sure price levels & timeframe are visible."
-)
+    img_4h = Image.open(htf)
+    img_1h = Image.open(mtf)
+    img_15m = Image.open(ltf)
 
-# ---------- ANALYSIS FUNCTION ----------
-def analyze_chart(image_path):
     prompt = f"""
-You are a professional institutional forex technical analyst.
+You are a professional forex trader.
 
-Analyze the uploaded TradingView chart using smart money concepts.
+Trading style: {style}
+Tools: {tools}
 
-Context:
-- Trading style: {trading_style}
-- Bias timeframe: {bias_tf}
-- Entry timeframe: {entry_tf}
-- Risk model: {risk_model}
+Analyze:
+- 4H: trend bias
+- 1H: structure, support/resistance, MA, trendline
+- 15m: entry, stop loss, take profit
 
-Provide a structured analysis with the following sections:
+Respond ONLY in valid JSON:
 
-1. Market Structure
-2. Directional Bias (Buy / Sell / Neutral)
-3. Key Support & Resistance
-4. Liquidity & Inducement
-5. Trade Setup (if valid):
-   - Entry Zone
-   - Stop Loss
-   - Take Profit Targets (TP1, TP2 if applicable)
-   - Risk-to-Reward Estimate
-6. Invalidation Conditions
-7. Risk Notes
-
-Rules:
-- Price levels must be realistic and chart-based
-- Use zones, not exact pip precision
-- Probability-based only
-- NO financial advice
-- If no valid setup, clearly say "No high-probability setup"
+{{
+  "bias": "bullish | bearish | range",
+  "support_resistance": [0.3, 0.6],
+  "moving_average": {{
+    "type": "EMA 50",
+    "line": [[0.1, 0.55], [0.9, 0.45]]
+  }},
+  "trendline": {{
+    "start": [0.1, 0.6],
+    "end": [0.9, 0.4]
+  }},
+  "entry_sl_tp": {{
+    "entry": 0.48,
+    "stop_loss": 0.55,
+    "take_profit": 0.35
+  }},
+  "confidence_score": 80,
+  "explanation": "HTF trend aligns with structure and entry confirmation."
+}}
 """
 
-    response = openai.ChatCompletion.create(
+    res = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You are a forex chart AI analyst."},
+            {"role": "system", "content": "Respond only with valid JSON."},
             {"role": "user", "content": prompt}
         ],
-        temperature=0.35
+        temperature=0.1
     )
 
-    return response.choices[0].message.content
+    try:
+        ai = json.loads(res.choices[0].message.content)
+    except json.JSONDecodeError:
+        st.error("AI response could not be parsed. Retry.")
+        st.stop()
 
-# ---------- MAIN CONTENT ----------
-col1, col2 = st.columns([1, 1.3])
-
-with col1:
-    st.subheader("📤 Upload Chart")
-    uploaded_file = st.file_uploader(
-        "TradingView Screenshot (PNG / JPG)",
-        type=["png", "jpg", "jpeg"]
+    save_trade(
+        st.session_state.user,
+        {
+            "bias": ai["bias"],
+            "entry": ai["entry_sl_tp"]["entry"],
+            "stop_loss": ai["entry_sl_tp"]["stop_loss"],
+            "take_profit": ai["entry_sl_tp"]["take_profit"],
+            "confidence": ai["confidence_score"]
+        }
     )
 
-    if uploaded_file:
-        st.image(uploaded_file, use_column_width=True)
+    st.metric("Market Bias", ai["bias"].upper())
+    st.metric("Trade Confidence", f"{ai['confidence_score']}%")
+    st.write(ai["explanation"])
 
-with col2:
-    st.subheader("📈 AI Trade Analysis")
+    if "Support & Resistance" in tools:
+        img_4h = draw_horizontal(img_4h, ai["support_resistance"], "blue")
+        img_1h = draw_horizontal(img_1h, ai["support_resistance"], "orange")
 
-    if uploaded_file:
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(uploaded_file.read())
-            chart_path = tmp.name
+    if "Moving Averages" in tools:
+        img_1h = draw_ma(img_1h, ai["moving_average"]["line"], "purple")
 
-        if st.button("🔍 Analyze Chart", use_container_width=True):
-            with st.spinner("Analyzing market structure & risk..."):
-                analysis = analyze_chart(chart_path)
+    if "Market Structure" in tools:
+        img_1h = draw_trendline(
+            img_1h,
+            ai["trendline"]["start"],
+            ai["trendline"]["end"],
+            "red"
+        )
 
-            st.success("Analysis complete")
-            st.markdown(analysis)
+    img_15m = draw_horizontal(
+        img_15m,
+        [
+            ai["entry_sl_tp"]["entry"],
+            ai["entry_sl_tp"]["stop_loss"],
+            ai["entry_sl_tp"]["take_profit"]
+        ],
+        "green"
+    )
 
-    else:
-        st.info("Upload a chart to receive AI-based trade analysis.")
+    img_15m.save("trade_setup.png")
 
-# ---------- FOOTER ----------
-st.divider()
-st.caption(
-    "⚠️ Educational purposes only. "
-    "Trade ideas are probabilistic and not financial advice."
-)
+    st.divider()
+    st.subheader("📊 Annotated Charts")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.image(img_4h, use_container_width=True)
+    with c2:
+        st.image(img_1h, use_container_width=True)
+    with c3:
+        st.image(img_15m, use_container_width=True)
+
+    with open("trade_setup.png", "rb") as f:
+        st.download_button(
+            "📥 Download Trade Setup",
+            f,
+            file_name="AI_Forex_Trade.png"
+        )
+
+# ---------------- HISTORY ----------------
+st.sidebar.divider()
+st.sidebar.subheader("📜 Trade History")
+
+history = load_trade_history(st.session_state.user)
+if history:
+    for trade in reversed(history[-5:]):
+        st.sidebar.markdown(
+            f"""
+            **Bias:** {trade['bias']}  
+            Entry: {trade['entry']}  
+            SL: {trade['stop_loss']}  
+            TP: {trade['take_profit']}  
+            Confidence: {trade['confidence']}%
+            """
+        )
+else:
+    st.sidebar.info("No trades yet.")
