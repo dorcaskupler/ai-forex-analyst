@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 # Initialize OpenAI client (latest SDK)
-client = OpenAI(api_key=st.secrets["My Test Key"])
+client = OpenAI(api_key=st.secrets[OPENAI_API_KEY"])
 
 # ---------- HEADER ----------
 st.markdown("""
