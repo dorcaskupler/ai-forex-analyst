@@ -1,2 +1,6 @@
 streamlit
-openai
+openai>=1.0.0
+pillow
+numpy
+opencv-python-headless
+
