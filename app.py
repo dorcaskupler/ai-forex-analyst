@@ -1,6 +1,6 @@
 import streamlit as st
 import tempfile
-import openai
+from openai import OpenAI
 
 # ---------- CONFIG ----------
 st.set_page_config(
@@ -9,7 +9,8 @@ st.set_page_config(
     page_icon="📊"
 )
 
-openai.api_key = st.secrets["My Teest Key"]
+# Initialize OpenAI client (latest SDK)
+client = OpenAI(api_key=st.secrets["My Test Key"])
 
 # ---------- HEADER ----------
 st.markdown("""
@@ -83,7 +84,8 @@ Rules:
 - If no valid setup, clearly say "No high-probability setup"
 """
 
-    response = openai.ChatCompletion.create(
+    # Using latest ChatCompletion API
+    response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": "You are a forex chart AI analyst."},
@@ -129,5 +131,5 @@ with col2:
 st.divider()
 st.caption(
     "⚠️ Educational purposes only. "
-    "Trade ideas are probabilistic and not financial advice."
-)
+    "T
+
