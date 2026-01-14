@@ -3,12 +3,12 @@ import json
 import os
 import hashlib
 from PIL import Image, ImageDraw
-from openai import OpenAI
+import openai  # LEGACY STYLE
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="AI Forex Analyst", layout="wide")
 
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 USERS_FILE = "users.json"
 HISTORY_DIR = "trade_history"
@@ -170,7 +170,8 @@ Respond ONLY in valid JSON:
 }}
 """
 
-    res = client.chat.completions.create(
+    # ---------------- OpenAI Call ----------------
+    response = openai.ChatCompletion.create(
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": "Respond only with valid JSON."},
@@ -180,11 +181,12 @@ Respond ONLY in valid JSON:
     )
 
     try:
-        ai = json.loads(res.choices[0].message.content)
+        ai = json.loads(response.choices[0].message['content'])
     except json.JSONDecodeError:
         st.error("AI response could not be parsed. Retry.")
         st.stop()
 
+    # ---------------- SAVE TRADE ----------------
     save_trade(
         st.session_state.user,
         {
@@ -196,6 +198,7 @@ Respond ONLY in valid JSON:
         }
     )
 
+    # ---------------- DISPLAY RESULTS ----------------
     st.metric("Market Bias", ai["bias"].upper())
     st.metric("Trade Confidence", f"{ai['confidence_score']}%")
     st.write(ai["explanation"])
